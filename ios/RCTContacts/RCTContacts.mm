@@ -183,6 +183,21 @@ RCT_EXPORT_METHOD(getContactsByEmailAddress:(NSString *)string
     [self getContactsFromAddressBook:contactStore byEmailAddress:string resolve:resolve];
 }
 
+RCT_EXPORT_METHOD(getChangedContacts:(RCTPromiseResolveBlock) resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    [self getContactChangeHistory:resolve reject:reject];
+}
+
+-(void) getContactChangeHistory:(RCTPromiseResolveBlock) resolve
+        reject:(RCTPromiseRejectBlock) reject
+{
+    CNContactStore* contactStore = [self contactsStore:reject];
+    if (!contactStore)
+        return;
+    
+    resolve([self retreiveHistoryEvents:contactStore]);
+}
+
 -(void) getContactsFromAddressBook:(CNContactStore *)store
                     byEmailAddress:(NSString *)emailAddress
                           resolve:(RCTPromiseResolveBlock) resolve
@@ -280,6 +295,67 @@ RCT_EXPORT_METHOD(getAllWithoutPhotos:(RCTPromiseResolveBlock) resolve rejecter:
 RCT_EXPORT_METHOD(getCount:(RCTPromiseResolveBlock) resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
     [self getAllContactsCount:resolve reject:reject];
+}
+
+-(NSMutableArray*) retreiveHistoryEvents:(CNContactStore*)contactStore
+{
+    CNChangeHistoryFetchRequest *fetchHistory = [[CNChangeHistoryFetchRequest alloc] init];
+    fetchHistory.startingToken = [[NSUserDefaults standardUserDefaults] dataForKey:@"CNContactChangeHistoryToken"];
+    NSMutableArray *keysToFetch = [NSMutableArray arrayWithArray: @[
+        CNContactEmailAddressesKey,
+        CNContactPhoneNumbersKey,
+        CNContactFamilyNameKey,
+        CNContactGivenNameKey,
+        CNContactMiddleNameKey,
+        CNContactPostalAddressesKey,
+        CNContactOrganizationNameKey,
+        CNContactJobTitleKey,
+        CNContactImageDataAvailableKey,
+        CNContactUrlAddressesKey,
+        CNContactBirthdayKey,
+        CNContactInstantMessageAddressesKey
+    ]];
+    fetchHistory.additionalContactKeyDescriptors = keysToFetch;
+    
+    NSError *error = nil;
+    
+    CNContactStore *store = [[CNContactStore alloc] init];
+    CNFetchResult *fetchResult = [store enumeratorForChangeHistoryFetchRequest:fetchHistory error:&error];
+    [[NSUserDefaults standardUserDefaults] setValue:fetchResult.currentHistoryToken forKey:@"CNContactChangeHistoryToken"];
+    
+    id object;
+    NSEnumerator *enumerator = [fetchResult value];
+    NSMutableArray *changedContacts = [[NSMutableArray alloc] init];
+    
+    while ((object = [enumerator nextObject])) {
+        // do something with object
+        NSLog(@"change history enumerator object = %@", object);
+        CNChangeHistoryEvent *historyEvent = (CNChangeHistoryEvent *) object;
+        if ([historyEvent isKindOfClass:[CNChangeHistoryDropEverythingEvent class]]) {
+            NSLog(@"change history - DROP EVERYTHING!");
+//            [historyEvent acceptEventVisitor: self];
+        } else {
+            if ([historyEvent isKindOfClass:[CNChangeHistoryAddContactEvent class]]) {
+                CNChangeHistoryAddContactEvent *addContactEvent = (CNChangeHistoryAddContactEvent *) object;
+                NSLog(@"change history - AddContact event container %@ - %@", addContactEvent.containerIdentifier, addContactEvent.contact);
+                
+                NSDictionary *contactDict = [self contactToDictionary: addContactEvent.contact withThumbnails:TRUE];
+                [changedContacts addObject:contactDict];
+            } else if ([historyEvent isKindOfClass:[CNChangeHistoryUpdateContactEvent class]]) {
+                CNChangeHistoryUpdateContactEvent *updateContactEvent = (CNChangeHistoryUpdateContactEvent *) object;
+                NSLog(@"change history - UpdateContact event - %@", updateContactEvent.contact);
+                
+                NSDictionary *contactDict = [self contactToDictionary: updateContactEvent.contact withThumbnails:TRUE];
+                [changedContacts addObject:contactDict];
+            } else if ([historyEvent isKindOfClass:[CNChangeHistoryDeleteContactEvent class]]) {
+                CNChangeHistoryDeleteContactEvent *deleteContactEvent = (CNChangeHistoryDeleteContactEvent *) object;
+                NSLog(@"change history - DeleteContact event - %@", deleteContactEvent.contactIdentifier);
+                
+                [changedContacts addObject:deleteContactEvent.contactIdentifier];
+            }
+        }
+    }
+    return changedContacts;
 }
 
 -(NSMutableArray*) retrieveContactsFromAddressBook:(CNContactStore*)contactStore
